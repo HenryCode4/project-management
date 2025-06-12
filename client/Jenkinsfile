@@ -29,7 +29,14 @@ pipeline {
             steps {
                 script {
                     def base = env.CHANGE_TARGET ?: 'master'
-                    def diff = sh(script: "git fetch origin ${base} && git diff --name-only ${base}...HEAD | grep '^${PROJECT_PATH}/' || true", returnStdout: true).trim()
+
+                    // Ensure local branch for master exists
+                    sh "git fetch origin ${base}:${base}"
+
+                    def diff = sh(
+                        script: "git diff --name-only ${base}...HEAD | grep '^${PROJECT_PATH}/' || true",
+                        returnStdout: true
+                    ).trim()
 
                     if (!diff) {
                         echo "🚫 No frontend changes. Skipping pipeline."
