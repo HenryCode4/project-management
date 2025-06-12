@@ -120,7 +120,7 @@ const HomePage = () => {
         </div>
         <div className="rounded-lg bg-white p-4 shadow dark:bg-dark-secondary">
           <h3 className="mb-4 text-lg font-semibold dark:text-white">
-            Project Status
+            Project Status test
           </h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
