@@ -1,0 +1,129 @@
+pipeline {
+    agent any
+
+    environment {
+    NODEJS_VERSION     = '18'
+    PROJECT_PATH       = 'server'
+    GITHUB_REPO_NAME   = 'HenryCode4/project-management'
+    EC2_USER           = 'ec2-user'                                   // ✅ Amazon Linux default user
+    EC2_HOST           = 'http://184.72.200.93'                           // 🔁 Replace with your EC2 Public IP
+    EC2_PROJECT_DIR    = '/home/ec2-user/project-management'          // ✅ Correct for Amazon Linux
+}
+
+    tools {
+        nodejs "${NODEJS_VERSION}"
+    }
+
+    options {
+        skipDefaultCheckout(true)
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Detect Server Changes') {
+            steps {
+                script {
+                    def base = env.CHANGE_TARGET ?: 'origin/master'
+                    def diff = sh(
+                        script: "git fetch origin ${base} && git diff --name-only ${base}...HEAD | grep '^${PROJECT_PATH}/' || true",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!diff) {
+                        echo "🚫 No server changes. Skipping pipeline."
+                        currentBuild.result = 'NOT_BUILT'
+                        error("Skipped: No server changes.")
+                    }
+
+                    echo "📝 Server changes detected:\n${diff}"
+                }
+            }
+        }
+
+        stage('Install & Build') {
+            steps {
+                dir("${PROJECT_PATH}") {
+                    sh 'npm ci'
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Deploy to EC2') {
+            when {
+                allOf {
+                    not { expression { return env.CHANGE_ID != null } } // Only deploy after PR merge
+                    branch 'master'
+                }
+            }
+            steps {
+                sshagent(['ec2-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
+                            set -e
+                            cd ${EC2_PROJECT_DIR}
+                            git pull origin master
+                            cd ${PROJECT_PATH}
+                            npm ci
+                            npm run build
+                            pm2 reload ecosystem.config.js --update-env
+                        EOF
+                    """
+                }
+            }
+        }
+
+        stage('Comment on PR') {
+            when {
+                expression { return env.CHANGE_ID != null }
+            }
+            steps {
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        gh auth login --with-token <<< "$GITHUB_TOKEN"
+                        gh pr comment $CHANGE_ID --repo $GITHUB_REPO_NAME --body "✅ Server build succeeded."
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Server pipeline completed successfully."
+            script {
+                if (env.CHANGE_ID) {
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                        sh '''
+                            gh auth login --with-token <<< "$GITHUB_TOKEN"
+                            gh pr comment $CHANGE_ID --repo $GITHUB_REPO_NAME --body "✅ Jenkins: Build successful."
+                        '''
+                    }
+                }
+            }
+        }
+
+        failure {
+            echo "❌ Server pipeline failed!"
+            script {
+                if (env.CHANGE_ID) {
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                        sh '''
+                            gh auth login --with-token <<< "$GITHUB_TOKEN"
+                            gh pr comment $CHANGE_ID --repo $GITHUB_REPO_NAME --body "❌ Jenkins: Build failed. Check logs for details."
+                        '''
+                    }
+                }
+            }
+        }
+
+        always {
+            cleanWs()
+        }
+    }
+}

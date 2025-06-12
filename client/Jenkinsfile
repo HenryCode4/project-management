@@ -1,0 +1,145 @@
+pipeline {
+    agent any
+
+    environment {
+        NODEJS_VERSION      = '18'
+        AWS_DEFAULT_REGION  = 'us-east-1'
+        AMPLIFY_APP_ID      = 'd18kwmxg0n9kwo'
+        AMPLIFY_BRANCH      = 'master'
+        PROJECT_PATH        = 'client'
+        GITHUB_REPO_NAME    = 'HenryCode4/project-management'
+    }
+
+    tools {
+        nodejs "${NODEJS_VERSION}"
+    }
+
+    options {
+        skipDefaultCheckout(true)
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Detect Frontend Changes') {
+            steps {
+                script {
+                    def base = env.CHANGE_TARGET ?: 'origin/master'
+                    def diff = sh(script: "git fetch origin ${base} && git diff --name-only ${base}...HEAD | grep '^${PROJECT_PATH}/' || true", returnStdout: true).trim()
+
+                    if (!diff) {
+                        echo "🚫 No frontend changes. Skipping pipeline."
+                        currentBuild.result = 'NOT_BUILT'
+                        error("Skipped: No frontend changes.")
+                    }
+
+                    echo "📝 Frontend changes detected:\n${diff}"
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                dir("${PROJECT_PATH}") {
+                    script {
+                        if (fileExists('package-lock.json')) {
+                            sh 'npm ci'
+                        } else {
+                            sh 'npm install'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                dir("${PROJECT_PATH}") {
+                    sh 'npm run lint'
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir("${PROJECT_PATH}") {
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Deploy to Amplify') {
+            when {
+                allOf {
+                    not { expression { return env.CHANGE_ID != null } } // Only deploy after merge
+                    branch 'master'
+                }
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-access']]) {
+                    sh '''
+                        if ! command -v aws &> /dev/null; then
+                            echo "Installing AWS CLI..."
+                            curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                            unzip -q awscliv2.zip
+                            sudo ./aws/install || true
+                        fi
+
+                        echo "🚀 Triggering Amplify deployment for branch: $AMPLIFY_BRANCH"
+                        aws amplify start-job --app-id $AMPLIFY_APP_ID --branch-name $AMPLIFY_BRANCH --job-type RELEASE
+                    '''
+                }
+            }
+        }
+
+        stage('Notify GitHub PR') {
+            when {
+                expression { return env.CHANGE_ID != null }
+            }
+            steps {
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    script {
+                        def message = "✅ Build passed!"
+
+                        sh """
+                            gh auth login --with-token <<< "$GITHUB_TOKEN"
+                            gh pr comment $CHANGE_ID --repo $GITHUB_REPO_NAME --body "${message}"
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Build completed successfully."
+        }
+
+        failure {
+            echo "❌ Build failed!"
+            script {
+                if (env.CHANGE_ID) {
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                        sh """
+                            gh auth login --with-token <<< "$GITHUB_TOKEN"
+                            gh pr comment $CHANGE_ID --repo $GITHUB_REPO_NAME --body "❌ Build failed. Please check Jenkins logs."
+                        """
+                    }
+                }
+            }
+        }
+
+        unstable {
+            echo "⚠️ Build completed with warnings."
+        }
+
+        always {
+            cleanWs()
+        }
+    }
+}
