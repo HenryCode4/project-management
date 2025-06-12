@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        NODEJS_VERSION      = '18'
+        NODEJS_VERSION = 'Node.js 18'
         AWS_DEFAULT_REGION  = 'us-east-1'
         AMPLIFY_APP_ID      = 'd18kwmxg0n9kwo'
         AMPLIFY_BRANCH      = 'master'

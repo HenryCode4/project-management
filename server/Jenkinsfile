@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-    NODEJS_VERSION     = '18'
+    NODEJS_VERSION = 'Node.js 18'
     PROJECT_PATH       = 'server'
     GITHUB_REPO_NAME   = 'HenryCode4/project-management'
     EC2_USER           = 'ec2-user'                                   // ✅ Amazon Linux default user
