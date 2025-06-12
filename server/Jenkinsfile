@@ -28,7 +28,7 @@ pipeline {
         stage('Detect Server Changes') {
             steps {
                 script {
-                    def base = env.CHANGE_TARGET ?: 'origin/master'
+                    def base = env.CHANGE_TARGET ?: 'master'
                     def diff = sh(
                         script: "git fetch origin ${base} && git diff --name-only ${base}...HEAD | grep '^${PROJECT_PATH}/' || true",
                         returnStdout: true
