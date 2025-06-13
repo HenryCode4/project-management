@@ -53,11 +53,11 @@ pipeline {
             steps {
                 dir("${PROJECT_PATH}") {
                     script {
-                        if (fileExists('package-lock.json')) {
-                            sh 'npm ci'
-                        } else {
-                            sh 'npm install'
-                        }
+                         if (fileExists('package-lock.json')) {
+                                sh 'npm ci --legacy-peer-deps'
+                            } else {
+                                sh 'npm install --legacy-peer-deps'
+                            }
                     }
                 }
             }
